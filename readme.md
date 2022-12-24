@@ -37,3 +37,6 @@ XGBRegressor
 MAE: 29.6304 RMSE: 38.5925 R2: 0.0612
 
 *currently there is no hyperparameter tuning here*
+
+## results by NN
+R2 score: 0.3141, RMSE: 32.52, MAE: 24.77
