@@ -40,3 +40,8 @@ MAE: 29.6304 RMSE: 38.5925 R2: 0.0612
 
 ## results by NN
 R2 score: 0.3141, RMSE: 32.52, MAE: 24.77
+
+## best params
+{'hidden_size': 512, 'activation1': 'tanh', 'activation2': 'tanh', 'dropout': 0.05, 'lr': 0.01, 'weight_decay': 1e-05, 'opt': 'Adam'}
+
+(tuned with optuna in 2000 iters)

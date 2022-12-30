@@ -72,28 +72,39 @@ class CNN(nn.Module): # CNN模型，有2D和1D两种，目前只用了2D，可�
         return X
 
 class NN(nn.Module): # 用来拟合的神经网络
-    def __init__(self, input_size, hidden_size=512):
+    def __init__(self, input_size, hidden_size=512, activation1='tanh', activation2='tanh', dropout=0.2):
         super(NN, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden_size//2)
         self.fc2 = nn.Linear(hidden_size//2, hidden_size)
         self.fc3 = nn.Linear(hidden_size, 1)
-        self.dropout = nn.Dropout(0.2)
+        self.activate1 = torch.tanh if activation1 == 'tanh' else (torch.relu if activation1 == 'relu' else torch.sigmoid)
+        self.activate2 = torch.tanh if activation2 == 'tanh' else (torch.relu if activation1 == 'relu' else torch.sigmoid)
+        self.dropout = nn.Dropout(dropout)
         self.CNN_model = CNN()
     def forward(self, X, random):
         # feat = self.CNN_model(random) # 这里指望它能提取一些特征，但效果不好
-        X = torch.tanh(self.fc1(X))
+        X = self.activate1(self.fc1(X))
         X = self.dropout(X)
-        X = torch.tanh(self.fc2(X))
+        X = self.activate2(self.fc2(X))
         X = self.dropout(X)
         # X = torch.cat((X, feat), dim=1)
         X = self.fc3(X)
         return X
 
-def train(model, X_train, y_train, X_val, y_val, y_true, y_ref, random_X_train, random_X_val, epochs=100, lr=0.0003):
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+def train(model, X_train, y_train, X_val, y_val, y_true, y_ref, random_X_train, random_X_val, patience=100, epochs=1000, lr=0.0003, opt='Adam', weight_decay=1e-5, verbose=True, tuning=False):
+    if opt == 'Adam':
+        optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    elif opt == 'SGD':
+        optimizer = optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay)
+    else:
+        optimizer = optim.RMSprop(model.parameters(), lr=lr, weight_decay=weight_decay)
     loss_fn = nn.MSELoss()
     loss_train = []
     loss_val = []
+    if not tuning:
+        best_epoch, best_R2, best_MAE, best_RMSE = 0, 0.3, 0, 0
+    else:
+        best_epoch, best_R2, best_MAE, best_RMSE = 0, 0, 0, 0
     for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
@@ -107,11 +118,24 @@ def train(model, X_train, y_train, X_val, y_val, y_true, y_ref, random_X_train, 
             y_pred = model(X_val, random_X_val)
             loss = loss_fn(y_pred, y_val)
             loss_val.append(loss.item())
-            y_pred = y_pred.reshape(-1).detach().numpy()
-        if epoch % 10 == 0:
+            y_pred = y_pred.reshape(-1).detach().cpu().numpy()
+            try:
+                curr_R2 = r2_score(y_true, y_pred+y_ref)
+            except Exception as e:
+                curr_R2 = 0
+            if curr_R2 > best_R2:
+                best_R2 = r2_score(y_true, y_pred+y_ref)
+                best_MAE = mean_absolute_error(y_true, y_pred+y_ref)
+                best_RMSE = np.sqrt(mean_squared_error(y_true, y_pred+y_ref))
+                best_epoch = epoch
+                if epoch - best_epoch > patience and best_epoch > 0:
+                    break
+                if not tuning:
+                    torch.save(model.state_dict(), 'best_model.pth')
+        if epoch % 10 == 0 and verbose:
             print(f'Epoch: {epoch}, Train loss: {loss_train[-1]}, Val loss: {loss_val[-1]}')
             print(f'R2 score: {r2_score(y_true, y_pred+y_ref)}, RMSE: {np.sqrt(mean_squared_error(y_true, y_pred+y_ref))}, MAE: {mean_absolute_error(y_true, y_pred+y_ref)}')
-    return loss_train, loss_val
+    return best_R2, best_MAE, best_RMSE, best_epoch
 
 def train_orig(model, X_train, y_train, X_val, y_val, y_true, y_ref, epochs=100, lr=0.0003):
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -175,12 +199,56 @@ def main():
     y_train = torch.from_numpy(y_train).float().reshape(-1, 1)
     y_true_train = torch.from_numpy(y_true_train).float().reshape(-1, 1)
     y_val = torch.from_numpy(y_val).float().reshape(-1, 1)
-    model = NN(X_train.shape[1])
+    model = NN(X_train.shape[1], hidden_size=128, dropout=0, activation1='relu', activation2='tanh')
     # model = CNN()
-    loss_train, loss_val = train(model, X_train, y_train, X_val, y_val, y_true, y_ref, random_X_train, random_X_val, epochs=1000)
+    best_R2, best_MAE, best_RMSE, best_epoch = train(model, X_train, y_train, X_val, y_val, y_true, y_ref, random_X_train, random_X_val, epochs=1000, lr=0.003, weight_decay=3e-6, opt='RMSprop', tuning=True, verbose=False)
+    print(f'Best R2 score: {best_R2}, Best RMSE: {best_RMSE}, Best MAE: {best_MAE}, Best epoch: {best_epoch}')
     # loss_train, loss_val = train_orig(model, X_train, y_true_train, X_val, y_val, y_true, y_ref, epochs=1000)
 
+def tuning():
+    import optuna
+    from optuna.samplers import TPESampler
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    X, y, y_var, data = load_data() # variance对应的是activity - weight*x的结果
+    random, _ = gen_data()
+    X_train, X_val, y_train, y_val = train_test_split(X, y_var, test_size=0.2, random_state=42)
+    random_X_train, random_X_val = train_test_split(random, test_size=0.2, random_state=42)
+    _, _, y_true_train, y_true = train_test_split(X, data['Activity'].values, test_size=0.2, random_state=42)
+    _, _, _, y_ref = train_test_split(X, data['weighted'].values, test_size=0.2, random_state=42)
+    X_train = torch.from_numpy(X_train).float().to(device)
+    random_X_train = torch.from_numpy(random_X_train).float().to(device)
+    X_val = torch.from_numpy(X_val).float().to(device)
+    random_X_val = torch.from_numpy(random_X_val).float().to(device)
+    y_train = torch.from_numpy(y_train).float().reshape(-1, 1).to(device)
+    y_true_train = torch.from_numpy(y_true_train).float().reshape(-1, 1).to(device)
+    y_val = torch.from_numpy(y_val).float().reshape(-1, 1).to(device)
+    def objective(trial):
+        best_R2s = []
+        for i in range(5):
+            hidden_size = trial.suggest_categorical("hidden_size", [128, 256, 512, 1024])
+            activation1 = trial.suggest_categorical("activation1", ["relu", "tanh", "sigmoid"])
+            activation2 = trial.suggest_categorical("activation2", ["relu", "tanh", "sigmoid"])
+            dropout = trial.suggest_categorical("dropout", [0, 0.05, 0.1, 0.2])
+            model = NN(input_size=X_train.shape[1], hidden_size=hidden_size, activation1=activation1, activation2=activation2, dropout=dropout)
+            model.to(device)
+            lr = trial.suggest_categorical("lr", [1e-2, 3e-3, 1e-3, 3e-4])
+            weight_decay = trial.suggest_categorical("weight_decay", [3e-5, 1e-5, 3e-6])
+            opt = trial.suggest_categorical("opt", ["Adam", "SGD", 'RMSprop'])
+            best_R2, best_MAE, best_RMSE, best_epoch = train(model, X_train, y_train, X_val, y_val, y_true, y_ref, random_X_train, random_X_val, epochs=1000, 
+                                                            lr=lr, weight_decay=weight_decay, opt=opt, verbose=False, tuning=True)   
+            best_R2s.append(best_R2)         
+        '''trial.report(np.mean(best_R2s), i)
+        if trial.should_prune():
+            raise optuna.TrialPruned()'''
+        return np.mean(best_R2s)
+
+    sampler = TPESampler(seed=42)
+    study = optuna.create_study(direction="maximize", sampler=sampler)
+    study.optimize(objective, n_trials=2000)
+    return study.best_params
 
 if __name__ == '__main__':
+    # best_params = tuning()
+    # print(best_params)
     main()
     # gen_data()
