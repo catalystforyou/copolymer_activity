@@ -8,21 +8,36 @@ from sklearn.model_selection import train_test_split, KFold
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.preprocessing import StandardScaler
 
-def load_data(): # 简单设计了一下feature，重点在引入了weighted
-    data = pd.read_csv('data/trainval.csv')
+def load_data(name='trainval'): # 简单设计了一下feature，重点在引入了weighted
+    data = pd.read_csv(f'data/{name}.csv')
     data['weighted_A1'] = 80 * data['A1']
     data['weighted_A2'] = 113.3 * data['A2']
     data['weighted_A3'] = 54.7 * data['A3']
     data['weighted_A4'] = 84.7 * data['A4']
     data['weighted'] = 80 * data['A1'] + 113.3 * data['A2'] + 54.7 * data['A3'] + 84.7 * data['A4']
-    X = data.drop(['Activity'], axis=1).values
-    data['Activity_var'] = data['Activity'] - data['weighted']
-    scaler = StandardScaler()
-    scaler.fit(X)
-    X = scaler.transform(X)
-    y = data['Activity'].values
-    y_var = data['Activity_var'].values
-    return X, y, y_var, data
+    if name == 'trainval':
+        X = data.drop(['Activity'], axis=1).values
+        data['Activity_var'] = data['Activity'] - data['weighted']
+        scaler = StandardScaler()
+        scaler.fit(X)
+        X = scaler.transform(X)
+        y = data['Activity'].values
+        y_var = data['Activity_var'].values
+        return X, y, y_var, data
+    else:
+        data_ = pd.read_csv(f'data/trainval.csv')
+        data_['weighted_A1'] = 80 * data_['A1']
+        data_['weighted_A2'] = 113.3 * data_['A2']
+        data_['weighted_A3'] = 54.7 * data_['A3']
+        data_['weighted_A4'] = 84.7 * data_['A4']
+        data_['weighted'] = 80 * data_['A1'] + 113.3 * data_['A2'] + 54.7 * data_['A3'] + 84.7 * data_['A4']
+        X_ = data_.drop(['Activity'], axis=1).values
+        data_['Activity_var'] = data_['Activity'] - data_['weighted']
+        scaler = StandardScaler()
+        scaler.fit(X_)
+        X = data.values
+        X = scaler.transform(X)
+        return X, data
 
 def gen_data(): # 产生随机序列，用于CNN采样
     data = pd.read_csv('data/trainval.csv')
@@ -81,7 +96,7 @@ class NN(nn.Module): # 用来拟合的神经网络
         self.activate2 = torch.tanh if activation2 == 'tanh' else (torch.relu if activation1 == 'relu' else torch.sigmoid)
         self.dropout = nn.Dropout(dropout)
         self.CNN_model = CNN()
-    def forward(self, X, random):
+    def forward(self, X, random=None):
         # feat = self.CNN_model(random) # 这里指望它能提取一些特征，但效果不好
         X = self.activate1(self.fc1(X))
         X = self.dropout(X)
@@ -131,7 +146,7 @@ def train(model, X_train, y_train, X_val, y_val, y_true, y_ref, random_X_train, 
                 if epoch - best_epoch > patience and best_epoch > 0:
                     break
                 if not tuning:
-                    torch.save(model.state_dict(), 'best_model.pth')
+                    torch.save(model.state_dict(), 'ckpts/best_model.pth')
         if epoch % 10 == 0 and verbose:
             print(f'Epoch: {epoch}, Train loss: {loss_train[-1]}, Val loss: {loss_val[-1]}')
             print(f'R2 score: {r2_score(y_true, y_pred+y_ref)}, RMSE: {np.sqrt(mean_squared_error(y_true, y_pred+y_ref))}, MAE: {mean_absolute_error(y_true, y_pred+y_ref)}')
@@ -247,8 +262,20 @@ def tuning():
     study.optimize(objective, n_trials=2000)
     return study.best_params
 
+def test():
+    X, data = load_data('test')
+    model = NN(X.shape[1], hidden_size=512, dropout=0.05, activation1='tanh', activation2='tanh')
+    model.load_state_dict(torch.load('ckpts/best_model.pth'))
+    model.eval()
+    X = torch.from_numpy(X).float()
+    y_pred = model(X)
+    y_pred = y_pred.detach().numpy().reshape(-1)
+    data['Activity'] = y_pred + data['weighted'].values
+    data.drop(['weighted', 'weighted_A1', 'weighted_A2', 'weighted_A3', 'weighted_A4'], axis=1, inplace=True)
+    data.to_csv('data/result.csv', index=False)
+
 if __name__ == '__main__':
     # best_params = tuning()
     # print(best_params)
-    main()
-    # gen_data()
+    # main()
+    test()
