@@ -199,9 +199,9 @@ def main():
     y_train = torch.from_numpy(y_train).float().reshape(-1, 1)
     y_true_train = torch.from_numpy(y_true_train).float().reshape(-1, 1)
     y_val = torch.from_numpy(y_val).float().reshape(-1, 1)
-    model = NN(X_train.shape[1], hidden_size=128, dropout=0, activation1='relu', activation2='tanh')
+    model = NN(X_train.shape[1], hidden_size=512, dropout=0.05, activation1='tanh', activation2='tanh')
     # model = CNN()
-    best_R2, best_MAE, best_RMSE, best_epoch = train(model, X_train, y_train, X_val, y_val, y_true, y_ref, random_X_train, random_X_val, epochs=1000, lr=0.003, weight_decay=3e-6, opt='RMSprop', tuning=True, verbose=False)
+    best_R2, best_MAE, best_RMSE, best_epoch = train(model, X_train, y_train, X_val, y_val, y_true, y_ref, random_X_train, random_X_val, epochs=1000, lr=0.01, weight_decay=1e-5, opt='Adam')
     print(f'Best R2 score: {best_R2}, Best RMSE: {best_RMSE}, Best MAE: {best_MAE}, Best epoch: {best_epoch}')
     # loss_train, loss_val = train_orig(model, X_train, y_true_train, X_val, y_val, y_true, y_ref, epochs=1000)
 
